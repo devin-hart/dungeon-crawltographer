@@ -1,0 +1,30 @@
+import pygame
+
+# Initialize Pygame for font loading
+pygame.init()
+
+# Constants
+WINDOW_WIDTH = 1200
+WINDOW_HEIGHT = 800
+CELL_SIZE = 30
+GRID_SIZE = 50  # 50x50 grid
+TITLE_BAR_HEIGHT = 30
+MENU_BAR_HEIGHT = 30
+ICON_PANEL_HEIGHT = 60
+
+# Colors
+BG_COLOR = (30, 30, 40)
+GRID_COLOR = (60, 60, 70)
+EXPLORED_COLOR = (100, 150, 200)
+CURRENT_POS_COLOR = (255, 200, 50)
+UI_BG_COLOR = (40, 40, 50)
+TEXT_COLOR = (220, 220, 220)
+BUTTON_COLOR = (70, 70, 80)
+BUTTON_HOVER_COLOR = (90, 90, 100)
+LABEL_BG_COLOR = (50, 50, 60, 200)
+SELECTION_COLOR = (100, 150, 255, 100) # Semi-transparent blue
+SELECTION_BOX_COLOR = (150, 200, 255)
+
+# Fonts
+FONT = pygame.font.Font(None, 24)
+SMALL_FONT = pygame.font.Font(None, 18)
