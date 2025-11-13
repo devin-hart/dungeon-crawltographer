@@ -1,6 +1,6 @@
 # Dungeon Crawltographer
 
-Dungeon Crawltographer is a simple, fast, and lightweight tool for creating grid-based maps for tabletop role-playing games. Built with Python and Pygame, it provides an intuitive interface for game masters to quickly sketch out dungeon layouts, mark points of interest, and manage multi-level environments.
+Dungeon Crawltographer is a simple, fast, and lightweight tool designed for players of first-person dungeon crawler video games (like *Eye of the Beholder* or *The Legend of Grimrock*) to map out their progress. It's also a great utility for game masters running tabletop RPGs. Built with Python and Pygame, it provides an intuitive interface to quickly sketch out dungeon layouts, mark points of interest, and manage multi-level environments.
 
 ![Splash Screen](splash.png)
 
