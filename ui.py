@@ -17,6 +17,7 @@ class UIManager:
         if self.app.show_icon_panel:
             self._draw_icon_panel()
         self._draw_dropdown_menus()
+        self._draw_hover_tooltip()
 
     def _draw_title_bar(self):
         pygame.draw.rect(self.screen, config.UI_BG_COLOR, (0, 0, self.app.window_width, config.TITLE_BAR_HEIGHT))
@@ -58,7 +59,7 @@ class UIManager:
         icon_x = 10
         icon_size = 40
         for icon_type, key in icon_list:
-            color = config.BUTTON_HOVER_COLOR if self.app.selected_icon == icon_type else config.BUTTON_COLOR
+            color = config.SELECTION_BOX_COLOR if self.app.selected_icon == icon_type else config.BUTTON_COLOR
             button_rect = pygame.Rect(icon_x, panel_y + 5, icon_size, icon_size)
             pygame.draw.rect(self.screen, color, button_rect)
             pygame.draw.rect(self.screen, config.GRID_COLOR, button_rect, 1)
@@ -83,7 +84,7 @@ class UIManager:
         if self.app.active_menu == 'file':
             dropdown_x = 10
             dropdown_y = config.TITLE_BAR_HEIGHT + config.MENU_BAR_HEIGHT
-            dropdown_items = ["New Map", "Save (Ctrl+S)", "Load (Ctrl+L)", "Quit"]
+            dropdown_items = ["New Map", "Save (Ctrl+S)", "Save As...", "Load (Ctrl+L)", "Quit"]
             self._draw_dropdown(dropdown_x, dropdown_y, 150, dropdown_items)
         elif self.app.active_menu == 'help':
             file_text_width = config.SMALL_FONT.render("File", True, config.TEXT_COLOR).get_width()
@@ -106,6 +107,34 @@ class UIManager:
             item_surf = config.SMALL_FONT.render(item, True, config.TEXT_COLOR)
             self.screen.blit(item_surf, (x + 10, item_y + 2))
 
+    def _draw_hover_tooltip(self):
+        """Draws a tooltip for a cell label when the mouse hovers over it."""
+        mouse_pos = pygame.mouse.get_pos()
+
+        # Do not draw tooltips if a menu is open or if dragging
+        if self.app.active_menu or self.app.dragging or self.app.left_mouse_down or self.app.right_mouse_down:
+            return
+
+        # Check if mouse is over the grid area
+        panel_h = config.ICON_PANEL_HEIGHT if self.app.show_icon_panel else 0
+        top_bar_height = config.TITLE_BAR_HEIGHT + config.MENU_BAR_HEIGHT
+        if mouse_pos[1] <= top_bar_height + panel_h:
+            return
+
+        grid_pos = self.app.screen_to_grid(*mouse_pos)
+        if not grid_pos:
+            return
+
+        # Check if a cell exists at this position and has a label
+        if self.app.current_floor in self.app.floors and grid_pos in self.app.floors[self.app.current_floor]:
+            cell = self.app.get_cell(*grid_pos)
+            if cell.label:
+                label_surf = config.FONT.render(cell.label, True, config.TEXT_COLOR)
+                tooltip_rect = pygame.Rect(mouse_pos[0] + 15, mouse_pos[1] + 10, label_surf.get_width() + 10, label_surf.get_height() + 6)
+                pygame.draw.rect(self.screen, config.UI_BG_COLOR, tooltip_rect)
+                pygame.draw.rect(self.screen, config.GRID_COLOR, tooltip_rect, 1)
+                self.screen.blit(label_surf, (tooltip_rect.x + 5, tooltip_rect.y + 3))
+
     def draw_dialogs(self):
         """Draw dialog windows"""
         if self.app.show_hotkeys_dialog:
@@ -118,7 +147,49 @@ class UIManager:
             self._draw_file_dialog("Load Map")
 
     def _draw_hotkeys_dialog(self):
-        dialog_width, dialog_height = 500, 500
+        hotkeys = [
+            ("General", ""),
+            ("Ctrl+S", "Save map"),
+            ("Ctrl+L", "Load map"),
+            ("Ctrl+Z / Ctrl+Y", "Undo / Redo"),
+            ("F11", "Toggle Fullscreen"),
+            ("ESC", "Close dialog or menu"),
+            ("", ""),
+            ("Map Interaction", ""),
+            ("Left Click", "Select a single cell"),
+            ("Ctrl + Left Click", "Apply icon to selected cell(s)"),
+            ("Ctrl + Drag", "Fill cells with selected icon"),
+            ("Shift + Drag", "Select multiple cells"),
+            ("Alt + Drag Selection", "Move selected cells"),
+            ("Right Click / Drag", "Erase cells"),
+            ("Middle Mouse Drag", "Pan the map view"),
+            ("Mouse Wheel", "Zoom in / out"),
+            ("L", "Add/Edit cell label"),
+            ("K", "Toggle lock on selected cells"),
+            ("0-9", "Select icon (0-9)"),
+            ("", ""),
+            ("Navigation", ""),
+            ("W / S", "Move player forward / backward"),
+            ("A / D", "Rotate player left / right"),
+            ("H", "Warp player to entrance"),
+            ("Arrow Keys", "Pan the map view"),
+            ("Page Up / Page Down", "Change floor"),
+            ("P", "Toggle Player Mode")
+        ]
+
+        # Dynamically calculate dialog height
+        dialog_width = 500
+        base_height = 80 # For title and padding
+        heading_height = 28
+        item_height = 22
+        separator_height = 10
+        
+        content_height = sum(
+            separator_height if not k and not d else (heading_height if not d else item_height)
+            for k, d in hotkeys
+        )
+        dialog_height = base_height + content_height
+
         dialog_x = (self.app.window_width - dialog_width) // 2
         dialog_y = (self.app.window_height - dialog_height) // 2
 
@@ -127,31 +198,6 @@ class UIManager:
 
         title = config.FONT.render("Hotkeys", True, config.TEXT_COLOR)
         self.screen.blit(title, (dialog_x + 20, dialog_y + 20))
-
-        hotkeys = [
-            ("General", ""),
-            ("Ctrl+S", "Save map"),
-            ("Ctrl+L", "Load map"),
-            ("Ctrl+Z / Ctrl+Y", "Undo / Redo"),
-            ("F11", "Toggle Fullscreen"),
-            ("", ""),
-            ("Map Interaction", ""),
-            ("Left Click / Drag", "Place selected icon"),
-            ("Right Click / Drag", "Erase cells"),
-            ("Middle Mouse Drag", "Pan the map view"),
-            ("Mouse Wheel", "Zoom in / out"),
-            ("L", "Add/Edit cell label"),
-            ("0-9", "Select icon (0-9)"),
-            ("", ""),
-            ("Navigation", ""),
-            ("W / S", "Move player forward / backward"),
-            ("A / D", "Rotate player left / right"),
-            ("Arrow Keys", "Pan the map view"),
-            ("Page Up / Page Down", "Change floor"),
-            ("P", "Toggle Player Mode (auto-explore)"),
-            ("", ""),
-            ("ESC", "Close dialog or menu")
-        ]
 
         y = dialog_y + 60
         for key, desc in hotkeys:

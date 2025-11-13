@@ -9,6 +9,12 @@ from ui import UIManager
 from event_handler import EventHandler, HAS_TKINTER
 from file_manager import save_map_data, load_map_data
 
+try:
+    from udp_listener import UDPInputListener
+except ImportError:
+    print("Warning: Could not import UDPInputListener. Remote mapping disabled.")
+    UDPInputListener = None
+
 # Initialize Pygame
 pygame.init()
 
@@ -60,18 +66,16 @@ class DungeonMapper:
         self.right_mouse_down = False
         self.last_marked_cell = None
         
+        # Cell move state
+        self.is_moving_selection = False
+        self.move_start_grid_pos = None
+
         # History for undo/redo
         self.history = []
         self.history_index = -1
         self.max_history = 100
         self.current_action = []  # Track cells modified in current drag action
 
-        # Splash screen
-        self.splash_image = None
-        try:
-            self.splash_image = pygame.image.load("splash.png")
-        except pygame.error as e:
-            print(f"Warning: Could not load splash.png: {e}")
         self.player_mode_enabled = False
         
         self.running = True
@@ -80,6 +84,12 @@ class DungeonMapper:
         self.renderer = Renderer(self)
         self.ui_manager = UIManager(self)
         self.event_handler = EventHandler(self)
+
+        # New: Start the UDP listener
+        self.udp_listener = None
+        if UDPInputListener:
+            self.udp_listener = UDPInputListener()
+            self.udp_listener.start()
 
     def get_cell(self, x: int, y: int, floor: int = None) -> Cell:
         """Get or create a cell at the given position"""
@@ -231,6 +241,7 @@ class DungeonMapper:
         self.current_action = []
         self.selected_cells.clear()
         print("New map created")
+        self.current_filepath = None
 
     def handle_click(self, pos: Tuple[int, int], button: int = 1, is_drag: bool = False):
         """Handle mouse click"""
@@ -240,21 +251,22 @@ class DungeonMapper:
         
         grid_pos = self.screen_to_grid(*pos)
         if grid_pos:
-            if not is_drag: # A normal click clears selection and selects the new cell
-                self.selected_cells.clear()
-            self.selected_cells.add(grid_pos)
-            self.apply_icon_to_selection(button)
+            self.apply_icon_to_selection(button, grid_pos)
 
-    def apply_icon_to_selection(self, button: int = 1):
+    def apply_icon_to_selection(self, button: int, grid_pos: Tuple[int, int]):
         """Applies the selected icon or erase action to all selected cells."""
-        for grid_pos in self.selected_cells:
-            cell = self.get_cell(*grid_pos)
+        # If there's a selection, apply to all selected cells.
+        # Otherwise, apply to the clicked cell.
+        target_cells = self.selected_cells if self.selected_cells else {grid_pos}
+
+        for pos in target_cells:
+            cell = self.get_cell(*pos)
             if cell.locked:
                 continue # Skip locked cells
 
-            self._record_cell_change(grid_pos, button)
+            self._record_cell_change(pos, button)
 
-    def _record_cell_change(self, grid_pos: Tuple[int, int], button: int):
+    def _record_cell_change(self, grid_pos: Tuple[int, int], button: int, new_cell_data: Optional[Cell] = None):
         """Helper to record a single cell change for history and apply it."""
         prev_state = None
         if grid_pos in self.floors[self.current_floor]:
@@ -266,16 +278,30 @@ class DungeonMapper:
                 'locked': cell.locked
             }
 
+        cell = self.get_cell(*grid_pos)
+
+        # If the cell is locked, prevent most modifications.
+        if cell.locked:
+            # Allow right-click to "clear" a locked cell, but not delete it.
+            if button == 3 and cell.explored:
+                cell.explored = False
+                cell.icon = IconType.NONE
+                cell.label = ""
+                new_state = {'explored': False, 'icon': IconType.NONE, 'label': "", 'locked': True}
+                self.current_action.append({'pos': grid_pos, 'prev': prev_state, 'new': new_state})
+            # Otherwise, do nothing to locked cells.
+            return
+
         if button == 1:  # Left click - add/mark cell
-            cell = self.get_cell(*grid_pos)
-            cell.explored = True
-            cell.icon = self.selected_icon
-            new_state = {
-                'explored': True,
-                'icon': self.selected_icon,
-                'label': cell.label,
-                'locked': cell.locked
-            }
+            if new_cell_data: # Pasting an existing cell
+                cell.explored = new_cell_data.explored
+                cell.icon = new_cell_data.icon
+                cell.label = new_cell_data.label
+                cell.locked = new_cell_data.locked
+            else: # Applying the selected icon from the panel
+                cell.explored = True
+                cell.icon = self.selected_icon
+            new_state = {'explored': cell.explored, 'icon': cell.icon, 'label': cell.label, 'locked': cell.locked}
             self.current_action.append({'pos': grid_pos, 'prev': prev_state, 'new': new_state})
 
         elif button == 3:  # Right click - remove cell
@@ -283,14 +309,30 @@ class DungeonMapper:
                 del self.floors[self.current_floor][grid_pos]
                 self.current_action.append({'pos': grid_pos, 'prev': prev_state, 'new': None})
 
+    def handle_remote_command(self, command: str):
+        """Processes commands received from the remote UDP client."""
+        if command == 'forward': self.move_player(forward=True, from_controller=True)
+        elif command == 'backward': self.move_player(forward=False, from_controller=True)
+        elif command == 'rotate_left': self.rotation = (self.rotation + 90) % 360
+        elif command == 'rotate_right': self.rotation = (self.rotation - 90) % 360
+        elif command == 'mark_cell':
+            # Manually mark the current cell, similar to a left-click
+            self._record_cell_change(self.current_pos, button=1)
+            self.save_state() # Commit the action to history
+        elif command == 'toggle_player_mode': # Keep this for the 'P' key
+            self.toggle_player_mode()
+
+
     def save_map(self, filename: str):
         """Save the current map to a file"""
         save_map_data(filename, self.floors, self.current_floor, self.current_pos, self.rotation)
+        self.current_filepath = filename # Remember the last saved path
 
     def load_map(self, filename: str):
         """Load a map from a file"""
         data = load_map_data(filename)
         if data:
+            self.current_filepath = filename # Remember the loaded path
             # Reconstruct cells to ensure they are Cell objects with all attributes
             self.floors = {
                 floor: {pos: cell for pos, cell in cells.items()} for floor, cells in data["floors"].items()
@@ -303,14 +345,18 @@ class DungeonMapper:
             self.history_index = -1
 
     def trigger_save(self):
+        """Saves to the current file, or opens 'Save As' dialog if no file is set."""
         self.active_menu = None
-        self.event_handler.trigger_save_with_dialog()
+        if self.current_filepath:
+            self.save_map(self.current_filepath)
+        else:
+            self.event_handler.trigger_save_as_with_dialog()
 
     def trigger_load(self):
         self.active_menu = None
         self.event_handler.trigger_load_with_dialog()
 
-    def move_player(self, forward: bool = True):
+    def move_player(self, forward: bool = True, from_controller: bool = False):
         """Move the player forward or backward relative to their rotation."""
         direction = -1 if forward else 1
         dx, dy = 0, 0
@@ -320,10 +366,15 @@ class DungeonMapper:
         elif self.rotation == 180: dy = -direction
         elif self.rotation == 270: dx = -direction
 
-        self.current_pos = (self.current_pos[0] + dx, self.current_pos[1] + dy)
-        # Mark the new cell as explored
-        if self.player_mode_enabled:
-            self.get_cell(*self.current_pos).explored = True
+        # Calculate the potential new position
+        next_pos = (self.current_pos[0] + dx, self.current_pos[1] + dy)
+
+        # If movement is from the controller, check if the destination is locked
+        if from_controller and self.get_cell(*next_pos).locked:
+            return # Do not move into a locked cell
+
+        self.current_pos = next_pos
+        # Automatic exploration is now removed. Marking is manual.
 
     def pan_camera(self, dx, dy):
         if self.rotation == 0: self.camera_x += dx; self.camera_y += dy
@@ -348,6 +399,46 @@ class DungeonMapper:
                     if cell.explored and not cell.locked:
                         self.input_mode = True
                         self.input_text = cell.label
+
+    def move_selection(self, end_grid_pos: Tuple[int, int]):
+        """Moves the entire selection of cells to a new location."""
+        if not self.selected_cells or not self.move_start_grid_pos:
+            return
+
+        dx = end_grid_pos[0] - self.move_start_grid_pos[0]
+        dy = end_grid_pos[1] - self.move_start_grid_pos[1]
+
+        if dx == 0 and dy == 0:
+            return # No movement
+
+        new_selection = set()
+        cells_to_move = []
+
+        # Prepare to move by gathering data first
+        for pos in self.selected_cells:
+            if pos in self.floors[self.current_floor]:
+                cells_to_move.append((pos, self.floors[self.current_floor][pos]))
+
+        # Apply the move
+        for original_pos, cell_to_move in cells_to_move:
+            new_pos = (original_pos[0] + dx, original_pos[1] + dy)
+            
+            # Record the creation of the new cell and deletion of the old one
+            self._record_cell_change(new_pos, button=1, new_cell_data=cell_to_move)
+            self._record_cell_change(original_pos, button=3) # Button 3 signifies deletion
+            new_selection.add(new_pos)
+
+        self.selected_cells = new_selection
+
+    def warp_to_entrance(self):
+        """Finds the entrance on the current floor and moves the player there."""
+        if self.current_floor in self.floors:
+            for (x, y), cell in self.floors[self.current_floor].items():
+                if cell.icon == IconType.ENTRANCE:
+                    self.current_pos = (x, y)
+                    print(f"Warped to entrance at ({x}, {y}) on floor {self.current_floor}")
+                    return
+        print(f"No entrance found on floor {self.current_floor}")
 
     def toggle_lock_on_selection(self):
         """Toggles the locked state for all selected cells."""
@@ -393,23 +484,8 @@ class DungeonMapper:
         self.ui_manager.draw_input_prompt()
         pygame.display.flip()
 
-    def show_splash(self):
-        """Display the splash screen for a few seconds."""
-        if not self.splash_image:
-            return
-
-        scaled_image = pygame.transform.scale(self.splash_image, (500, 500))
-
-        self.screen.fill(config.BG_COLOR)
-        splash_rect = scaled_image.get_rect(center=self.screen.get_rect().center)
-        self.screen.blit(scaled_image, splash_rect)
-        pygame.display.flip()
-        pygame.time.wait(3000) # Wait for 3 seconds
-
     def run(self):
         """Main game loop"""
-        self.show_splash()
-
         while self.running:
             self.clock.tick(60)
 

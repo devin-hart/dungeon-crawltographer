@@ -12,6 +12,12 @@ try:
 except ImportError:
     HAS_TKINTER = False
 
+try:
+    from udp_listener import REMOTE_MOVE_EVENT
+except ImportError:
+    HAS_TKINTER = False
+    REMOTE_MOVE_EVENT = -1
+
 class EventHandler:
     def __init__(self, app):
         self.app = app
@@ -24,6 +30,11 @@ class EventHandler:
                 self.app.window_width = event.w
                 self.app.window_height = event.h
                 self.app.screen = pygame.display.set_mode((self.app.window_width, self.app.window_height), pygame.RESIZABLE)
+            
+            # Handle the custom UDP event
+            elif event.type == REMOTE_MOVE_EVENT:
+                self.app.handle_remote_command(event.command)
+                continue
             
             # Prioritize dialogs and text input over other events
             if self.app.is_dialog_open():
@@ -54,19 +65,34 @@ class EventHandler:
             if self.handle_ui_click(event.pos):
                 return
             
+            # Check for starting a move operation
+            if mods & pygame.KMOD_ALT:
+                grid_pos = self.app.screen_to_grid(*event.pos)
+                if grid_pos and grid_pos in self.app.selected_cells:
+                    self.app.is_moving_selection = True
+                    self.app.move_start_grid_pos = grid_pos
+                    return
+
             # Handle multi-selection
             if mods & pygame.KMOD_SHIFT:
                 self.app.multi_select_mode = True
                 self.app.selection_start_pos = self.app.screen_to_grid(*event.pos)
-            else:
+            # CTRL + Left Click to apply the icon
+            elif mods & pygame.KMOD_CTRL:
                 self.app.left_mouse_down = True
-                self.app.handle_click(event.pos, button=1)
+                self.app.handle_click(event.pos, button=1, is_drag=False)
+            # Simple Left Click to select
+            else:
+                grid_pos = self.app.screen_to_grid(*event.pos)
+                if grid_pos:
+                    self.app.selected_cells.clear()
+                    self.app.selected_cells.add(grid_pos)
 
         elif event.button == 3: # Right click
             if not (mods & pygame.KMOD_SHIFT): # Don't erase if starting a selection
                 self.app.selected_cells.clear()
             self.app.right_mouse_down = True
-            self.app.handle_click(event.pos, button=3)
+            self.app.handle_click(event.pos, button=3, is_drag=False)
         elif event.button == 2: # Middle click
             self.app.dragging = True
             self.app.drag_start_pos = event.pos
@@ -74,6 +100,15 @@ class EventHandler:
 
     def handle_mouse_up(self, event):
         if event.button == 1:
+            # Handle dropping a moved selection
+            if self.app.is_moving_selection:
+                end_grid_pos = self.app.screen_to_grid(*event.pos)
+                if end_grid_pos:
+                    self.app.move_selection(end_grid_pos)
+                self.app.is_moving_selection = False
+                self.app.move_start_grid_pos = None
+                return # Stop further processing after a move
+
             if self.app.multi_select_mode:
                 self.app.multi_select_mode = False
                 end_pos = self.app.screen_to_grid(*event.pos)
@@ -106,7 +141,9 @@ class EventHandler:
         elif event.y < 0: self.app.zoom = max(0.3, self.app.zoom / 1.1)
 
     def handle_mouse_motion(self, event):
-        if self.app.left_mouse_down and not self.app.multi_select_mode and event.pos[1] > config.TITLE_BAR_HEIGHT + config.MENU_BAR_HEIGHT + (config.ICON_PANEL_HEIGHT if self.app.show_icon_panel else 0):
+        mods = pygame.key.get_mods()
+        # Only drag-draw if CTRL is held
+        if self.app.left_mouse_down and (mods & pygame.KMOD_CTRL) and not self.app.multi_select_mode and event.pos[1] > config.TITLE_BAR_HEIGHT + config.MENU_BAR_HEIGHT + (config.ICON_PANEL_HEIGHT if self.app.show_icon_panel else 0):
             grid_pos = self.app.screen_to_grid(*event.pos)
             if grid_pos and grid_pos != self.app.last_marked_cell:
                 # Directly call handle_click for drag-drawing to process one cell at a time
@@ -115,7 +152,7 @@ class EventHandler:
         elif self.app.right_mouse_down and not self.app.multi_select_mode and event.pos[1] > config.TITLE_BAR_HEIGHT + config.MENU_BAR_HEIGHT + (config.ICON_PANEL_HEIGHT if self.app.show_icon_panel else 0):
             grid_pos = self.app.screen_to_grid(*event.pos)
             if grid_pos and grid_pos != self.app.last_marked_cell:
-                self.app.handle_click(event.pos, button=3)
+                self.app.handle_click(event.pos, button=3, is_drag=True)
                 self.app.last_marked_cell = grid_pos
         elif self.app.dragging:
             dx = (event.pos[0] - self.app.drag_start_pos[0]) / (config.CELL_SIZE * self.app.zoom)
@@ -123,8 +160,8 @@ class EventHandler:
             angle = math.radians(self.app.rotation)
             rotated_dx = dx * math.cos(angle) + dy * math.sin(angle)
             rotated_dy = -dx * math.sin(angle) + dy * math.cos(angle)
-            self.app.camera_x = self.app.drag_start_camera[0] - rotated_dx
-            self.app.camera_y = self.app.drag_start_camera[1] - rotated_dy
+            self.app.camera_x = self.app.drag_start_camera[0] + rotated_dx
+            self.app.camera_y = self.app.drag_start_camera[1] + rotated_dy
 
     def handle_key_down(self, event):
         mods = pygame.key.get_mods()
@@ -166,6 +203,7 @@ class EventHandler:
         elif event.key == pygame.K_F11: self.app.toggle_fullscreen()
         elif event.key == pygame.K_k: self.app.toggle_lock_on_selection()
         elif event.key == pygame.K_p: self.app.toggle_player_mode()
+        elif event.key == pygame.K_h: self.app.warp_to_entrance()
 
     def handle_dialog_input(self, event):
         if event.key == pygame.K_ESCAPE:
@@ -235,13 +273,14 @@ class EventHandler:
     def handle_dropdown_click(self, pos):
         if self.app.active_menu == 'file':
             dropdown_y = config.TITLE_BAR_HEIGHT + config.MENU_BAR_HEIGHT
-            items = ["New Map", "Save (Ctrl+S)", "Load (Ctrl+L)", "Quit"]
+            items = ["New Map", "Save (Ctrl+S)", "Save As...", "Load (Ctrl+L)", "Quit"]
             if 10 <= pos[0] <= 160 and dropdown_y <= pos[1] <= dropdown_y + len(items) * 25 + 10:
                 item_index = (pos[1] - dropdown_y - 5) // 25
                 if item_index == 0: self.app.new_map()
                 elif item_index == 1: self.app.trigger_save()
-                elif item_index == 2: self.app.trigger_load()
-                elif item_index == 3: self.app.running = False
+                elif item_index == 2: self.trigger_save_as_with_dialog()
+                elif item_index == 3: self.app.trigger_load()
+                elif item_index == 4: self.app.running = False
                 self.app.active_menu = None
                 return True
         elif self.app.active_menu == 'help':
@@ -258,23 +297,25 @@ class EventHandler:
         return False
 
     def handle_icon_panel_click(self, pos):
+        """Handles clicks on the icon panel to select an icon."""
         icon_list = [
             IconType.NONE, IconType.ENTRANCE, IconType.CHEST, IconType.LOCKED_DOOR,
             IconType.STAIRS_UP, IconType.STAIRS_DOWN, IconType.BOSS, IconType.NPC,
             IconType.SWITCH, IconType.TRAP
         ]
         icon_x = 10
-        icon_size = 50
+        icon_size = 40
+        icon_spacing = 5
         panel_y = config.TITLE_BAR_HEIGHT + config.MENU_BAR_HEIGHT
-        
-        if panel_y + 15 <= pos[1] <= panel_y + 15 + icon_size:
+
+        if panel_y + 5 <= pos[1] <= panel_y + 5 + icon_size:
             for icon_type in icon_list:
                 if icon_x <= pos[0] <= icon_x + icon_size:
                     self.app.selected_icon = icon_type
-                    break
-                icon_x += icon_size + 10
+                    return # Found the clicked icon
+                icon_x += icon_size + icon_spacing
 
-    def trigger_save_with_dialog(self):
+    def trigger_save_as_with_dialog(self):
         if HAS_TKINTER:
             root = tk.Tk()
             root.withdraw()

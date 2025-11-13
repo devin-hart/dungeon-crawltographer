@@ -29,34 +29,23 @@ class Renderer:
         # Pass 1: Draw cell backgrounds and icons
         if self.app.current_floor in self.app.floors:
             for (x, y), cell in self.app.floors[self.app.current_floor].items():
-                if cell.explored:
-                    screen_x, screen_y = self.app.grid_to_screen(x, y)
-                    if -size <= screen_x <= self.app.window_width + size and -size <= screen_y <= self.app.window_height + size:
+                screen_x, screen_y = self.app.grid_to_screen(x, y)
+                if -size <= screen_x <= self.app.window_width + size and -size <= screen_y <= self.app.window_height + size:
+                    # Draw explored cell background and main icon
+                    if cell.explored:
+                        # Use a different color if the cell has a label
+                        bg_color = config.LABELED_CELL_COLOR if cell.label else config.EXPLORED_COLOR
                         rect = pygame.Rect(int(screen_x - size/2), int(screen_y - size/2), int(size), int(size))
-                        pygame.draw.rect(self.screen, config.EXPLORED_COLOR, rect)
+                        pygame.draw.rect(self.screen, bg_color, rect)
                         pygame.draw.rect(self.screen, config.GRID_COLOR, rect, 1)
                         if cell.icon != IconType.NONE:
                             self.draw_icon(cell.icon, screen_x, screen_y, size)
-                        if cell.locked:
-                            self.draw_lock_icon(screen_x, screen_y, size)
+                    # Always draw the lock icon if the cell is locked, regardless of explored state
+                    if cell.locked:
+                        self.draw_lock_icon(screen_x, screen_y, size)
 
         self._draw_selection_highlight()
-
-        # Pass 2: Draw labels on top of everything else
-        if self.app.current_floor in self.app.floors:
-            for (x, y), cell in self.app.floors[self.app.current_floor].items():
-                if cell.explored and cell.label:
-                    screen_x, screen_y = self.app.grid_to_screen(x, y)
-                    size = config.CELL_SIZE * self.app.zoom
-                    if -size <= screen_x <= self.app.window_width + size and -size <= screen_y <= self.app.window_height + size:
-                        if cell.label:
-                            label_surf = config.SMALL_FONT.render(cell.label, True, config.TEXT_COLOR)
-                            label_bg = pygame.Surface((label_surf.get_width() + 4, label_surf.get_height() + 2))
-                            label_bg.fill(config.LABEL_BG_COLOR[:3])
-                            label_bg.set_alpha(200)
-                            label_y = screen_y - (size / 2) - label_surf.get_height() - 4
-                            self.screen.blit(label_bg, (screen_x - label_surf.get_width()//2 - 2, label_y - 2))
-                            self.screen.blit(label_surf, (screen_x - label_surf.get_width()//2, label_y))
+        self._draw_moving_selection_ghost()
 
         screen_x, screen_y = self.app.grid_to_screen(*self.app.current_pos)
         pygame.draw.circle(self.screen, config.CURRENT_POS_COLOR, (int(screen_x), int(screen_y)), int(size * 0.4))
@@ -93,6 +82,31 @@ class Renderer:
 
         rect = pygame.Rect(start_screen_pos[0], start_screen_pos[1], width, height)
         pygame.draw.rect(self.screen, config.SELECTION_BOX_COLOR, rect, 2)
+
+    def _draw_moving_selection_ghost(self):
+        """Draws a semi-transparent preview of the selection being moved."""
+        if not self.app.is_moving_selection or not self.app.selected_cells:
+            return
+
+        mouse_pos = pygame.mouse.get_pos()
+        current_grid_pos = self.app.screen_to_grid(*mouse_pos)
+        start_grid_pos = self.app.move_start_grid_pos
+
+        if not current_grid_pos or not start_grid_pos:
+            return
+
+        dx = current_grid_pos[0] - start_grid_pos[0]
+        dy = current_grid_pos[1] - start_grid_pos[1]
+
+        size = config.CELL_SIZE * self.app.zoom
+        ghost_surface = pygame.Surface((size, size), pygame.SRCALPHA)
+        ghost_color = (*config.SELECTION_BOX_COLOR, 120) # Use selection color with alpha
+        ghost_surface.fill(ghost_color)
+
+        for cell_pos in self.app.selected_cells:
+            ghost_pos = (cell_pos[0] + dx, cell_pos[1] + dy)
+            screen_x, screen_y = self.app.grid_to_screen(*ghost_pos)
+            self.screen.blit(ghost_surface, (screen_x - size/2, screen_y - size/2))
 
 
     def draw_icon(self, icon_type: IconType, x: float, y: float, size: float):
