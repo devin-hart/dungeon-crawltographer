@@ -9,6 +9,7 @@ MAPPER_PC_IP = "192.168.1.213"
 MAPPER_PC_PORT = 5000
 
 ACK_TIMEOUT = 0.1 # 100ms
+COMMAND_COOLDOWN = 0.15 # 150ms cooldown. Adjust if needed.
 # Map controller input codes to the command strings expected by the mapper.
 COMMAND_MAP = {
     # D-Pad Y-axis: -1 for UP, 1 for DOWN
@@ -45,6 +46,8 @@ def process_gamepad_events():
     last_sent_command = None
     sequence_number = 0
 
+    last_send_time = 0
+
     # Start the acknowledgment listener thread
     ack_listener = AckListener(sock)
     ack_listener.start()
@@ -61,11 +64,9 @@ def process_gamepad_events():
                 # print(f"Raw Event: code={event.code}, state={event.state}, event_type={event.ev_type}") # DEBUG
                 if event.code in COMMAND_MAP:
                     command = COMMAND_MAP[event.code](event.state)
-                    # A non-None command means a direction was pressed
                     if command:
                         current_command = command
                         print(f"Detected command: {current_command}")
-                    # A state of 0 means the D-pad axis returned to neutral
                     elif event.state == 0:
                         dpad_released = True
 
@@ -76,6 +77,12 @@ def process_gamepad_events():
 
             # Transmit only if the command is active and different from the last sent command
             if current_command and current_command != last_sent_command:
+                now = time.time()
+                if now - last_send_time < COMMAND_COOLDOWN:
+                    # If we are in the cooldown period, ignore the command.
+                    continue
+                last_send_time = now
+
                 sequence_number += 1
                 message = f"{sequence_number};{current_command}"
                 

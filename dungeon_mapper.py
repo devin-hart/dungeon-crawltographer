@@ -253,11 +253,11 @@ class DungeonMapper:
         if grid_pos:
             self.apply_icon_to_selection(button, grid_pos)
 
-    def apply_icon_to_selection(self, button: int, grid_pos: Tuple[int, int]):
+    def apply_icon_to_selection(self, button: int, grid_pos: Optional[Tuple[int, int]] = None):
         """Applies the selected icon or erase action to all selected cells."""
         # If there's a selection, apply to all selected cells.
         # Otherwise, apply to the clicked cell.
-        target_cells = self.selected_cells if self.selected_cells else {grid_pos}
+        target_cells = self.selected_cells if self.selected_cells else {grid_pos} if grid_pos else set()
 
         for pos in target_cells:
             cell = self.get_cell(*pos)
@@ -374,7 +374,13 @@ class DungeonMapper:
             return # Do not move into a locked cell
 
         self.current_pos = next_pos
-        # Automatic exploration is now removed. Marking is manual.
+
+        # If player mode is on, automatically mark the new cell as explored.
+        if self.player_mode_enabled:
+            cell = self.get_cell(*self.current_pos)
+            if not cell.explored:
+                self._record_cell_change(self.current_pos, button=1)
+                self.save_state()
 
     def pan_camera(self, dx, dy):
         if self.rotation == 0: self.camera_x += dx; self.camera_y += dy

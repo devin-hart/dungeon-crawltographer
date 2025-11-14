@@ -178,10 +178,18 @@ class EventHandler:
         elif event.key == pygame.K_s: self.app.move_player(forward=False)
         elif event.key == pygame.K_a: self.app.rotation = (self.app.rotation + 90) % 360
         elif event.key == pygame.K_d: self.app.rotation = (self.app.rotation - 90) % 360
-        elif event.key == pygame.K_UP: self.app.pan_camera(0, -1)
-        elif event.key == pygame.K_DOWN: self.app.pan_camera(0, 1)
-        elif event.key == pygame.K_LEFT: self.app.pan_camera(-1, 0)
-        elif event.key == pygame.K_RIGHT: self.app.pan_camera(1, 0)
+        elif event.key == pygame.K_UP:
+            if self.app.player_mode_enabled: self.app.move_player(forward=True)
+            else: self.app.pan_camera(0, -1)
+        elif event.key == pygame.K_DOWN:
+            if self.app.player_mode_enabled: self.app.move_player(forward=False)
+            else: self.app.pan_camera(0, 1)
+        elif event.key == pygame.K_LEFT:
+            if self.app.player_mode_enabled: self.app.rotation = (self.app.rotation + 90) % 360
+            else: self.app.pan_camera(-1, 0)
+        elif event.key == pygame.K_RIGHT:
+            if self.app.player_mode_enabled: self.app.rotation = (self.app.rotation - 90) % 360
+            else: self.app.pan_camera(1, 0)
         
         # Zoom
         elif event.key in (pygame.K_EQUALS, pygame.K_PLUS): self.app.zoom = min(3.0, self.app.zoom + 0.1)
@@ -203,6 +211,7 @@ class EventHandler:
         elif event.key == pygame.K_F11: self.app.toggle_fullscreen()
         elif event.key == pygame.K_k: self.app.toggle_lock_on_selection()
         elif event.key == pygame.K_p: self.app.toggle_player_mode()
+        elif event.key == pygame.K_e: self.app.apply_icon_to_selection(button=1)
         elif event.key == pygame.K_h: self.app.warp_to_entrance()
 
     def handle_dialog_input(self, event):

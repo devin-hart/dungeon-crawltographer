@@ -22,8 +22,10 @@ def save_map_data(filename: str, floors: Dict[int, Dict[Tuple[int, int], Cell]],
     for floor, cells in floors.items():
         data["floors"][str(floor)] = {}
         for (x, y), cell in cells.items():
-            if cell.explored:
+            # Save the cell if it's explored OR if it's locked
+            if cell.explored or cell.locked:
                 data["floors"][str(floor)][f"{x},{y}"] = {
+                    "explored": cell.explored, # Explicitly save explored state
                     "icon": cell.icon.value,
                     "label": cell.label,
                     "locked": cell.locked
